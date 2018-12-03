@@ -9,6 +9,8 @@ import struct
 import socket
 import os
 import threading
+import json
+from varyPackage.requireFileClass import RequireFileClass
 
 # In[12]:
 
@@ -57,23 +59,38 @@ def init():
     except Exception as e:
         print(e)
 
-def toprouter():
-    
+def whatKindaPackage(data):
+    return eval(data.decode())["kind"]
+
+def toprouter(udpsocket,data,addr):
+    kind = whatKindaPackage(data)
+    log(kind)
+    if kind == "RequireFileClass":
+        log("make sure require file package")
+        package = RequireFileClass(data)
+        f = open(package.package["data"],'rb')
+        # test whole file
+        byteFile = f.read()
+        sendBackUdpSocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+        sendBackUdpSocket.sendto(byteFile,(package.package["ip"],int(package.package["port"])))
+        log("___send back file___")
+        sendBackUdpSocket.close()
+
 
 def runServer(udpsocket):
     log("running server")
     while True:
         data , addr = udpsocket.recvfrom(1024)
-        router(data,addr)
         # addr should be ("127.0.0.1", 8000)
-        t = threading.Thread(target=toprouter,agrs=(udpsocket,data,addr))
+        log(data)
+        t = threading.Thread(target=toprouter,args=(udpsocket,data,addr))
         t.start()
 # In[15]:
 
 
 if __name__ == "__main__":
-    init()
-
+    sock = init()
+    runServer(sock)
 
 # In[ ]:
 
