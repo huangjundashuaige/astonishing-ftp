@@ -10,18 +10,30 @@ import socket
 import os
 import threading
 import json
-from varyPackage.requireFileClass import RequireFileClass
-
+from varyPackage.packages import *
+import argparse
 # In[12]:
+## global variable
+states = dict()
+file_dict = dict()
+require_dict = dict()
+file_package_length = 1024
+## send file fsm  require->ok->ok back->(send and ack)->fin
+## recv file fsm  request->ok->(send and ack)->fin
 
 
-def args():
-    if len(sys.argv) ==2:
-        return dict({"ip":sys.argv[1].split(":")[0],"port":sys.argv[1].split(":")[1]})
-    elif len(sys.argv) ==1:
-        return dict({"ip":"127.0.0.1","port":8888})
-    else:
-        raise Exception("wrong uausage")
+def init_args():
+    global args
+    parser = argparse.ArgumentParser(description='aftp server')
+    #parser.add_argument('--file', default="./sampleFile/123.txt", type=str, help='the file send or recv')
+    #parser.add_argument('--recv', action="store_true",help="recv")
+    #parser.add_argument('--send',action="stroe_true",help="send")
+    #parser.add_argument('dest_ip',default="127.0.0.1",type=str,help="ip address target")
+    #parser.add_argument('dest_port',default=8888,type=int,help="ip port target")
+    parser.add_argument('--source_ip',default="127.0.0.1",type=str,help="ip address target")
+    parser.add_argument('--source_port',default=8888,type=int,help="ip port target")
+    parser.add_argument('--debug',action="store_true",help="debuging")
+    args = parser.parse_args()
 
 
 # In[ ]:
@@ -33,15 +45,13 @@ def args():
 # In[9]:
 
 
-# global variable
-isDebug = True
 
 
 # In[10]:
 
 
 def log(message):
-    if isDebug:
+    if args.debug:
         print(message)
 
 
@@ -49,46 +59,121 @@ def log(message):
 
 
 def init():
-    try:
-        ipNport = args()
-        log("---init ftp server---")
-        udpsock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-        udpsock.bind((ipNport["ip"],int(ipNport["port"])))
-        log("server bind to {} : {}".format(ipNport["ip"],ipNport["port"]))
-        return udpsock
-    except Exception as e:
-        print(e)
+    log("---init ftp server---")
+    udpsock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+    udpsock.bind((args.source_ip,args.source_port))
+    if args.debug==False:
+        udpsock.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+        udpsock.settimeout(1)
+    log("server bind to {} : {}".format(args.source_ip,args.source_port))
+    return udpsock
 
 def whatKindaPackage(data):
     return eval(data.decode())["kind"]
 
-def toprouter(udpsocket,data,addr):
+def send_file(addr):
+    global file_dict
+    global args
+    filesocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+    if file_dict[addr]["current_seq"] + 1024 > file_dict[addr]["length"]:
+        log(file_dict[addr]["bytes_file"][file_dict[addr]["current_seq"]:])
+        package = FileClass(file_dict[addr]["bytes_file"][file_dict[addr]["current_seq"]:],args.source_ip,args.source_port)
+        file_dict[addr]["current_seq"] = file_dict[addr]["length"]
+    else:
+        package = FileClass(file_dict[addr]["bytes_file"][file_dict[addr]["current_seq"]:file_dict[addr]["current_seq"]+1024],args.source_ip,args.source_port)
+        file_dict[addr]["current_seq"] += 1024
+    package.seq(file_dict[addr]["current_seq"])
+    filesocket.sendto(bytes(package),(require_dict[addr].package["source_ip"],require_dict[addr].package["source_port"]))
+# self extended socket send method with timer to make sure
+#def timer_send(socket,package,addr):
+#    socket.sendto(package,addr)
+#    
+#    t = threading.Timer(rtt_dict[addr],)
+
+def init_file_dict(addr,bytes_file):
+    global file_dict
+    file_dict[addr] = dict()
+    file_dict[addr]["length"] = len(bytes_file)
+    log("length {}".format(len(bytes_file)))
+    file_dict[addr]["current_seq"] = 0
+    file_dict[addr]["bytes_file"] = bytes_file
+
+def init_require_dict(addr,package):
+    global require_dict
+    require_dict[addr] = package
+
+def multiplexing(udpsocket,data,addr):
     kind = whatKindaPackage(data)
+    addr = (eval(data.decode())["source_ip"],eval(data.decode())["source_port"])
     log(kind)
     if kind == "RequireFileClass":
+        #fsm
+        states[addr] = "require"
+        
         log("make sure require file package")
         package = RequireFileClass(data)
         f = open(package.package["data"],'rb')
         # test whole file
-        byteFile = f.read()
+        init_file_dict(addr,f.read())
+        init_require_dict(addr,package)
+        f.close()
+        send_file(addr)
+    if kind == "RequestFileClass":
+        #fsm
+        states[addr] = "request"
+        log("request to send file package")
+        package = RequestFileClass(data)
         sendBackUdpSocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-        sendBackUdpSocket.sendto(byteFile,(package.package["ip"],int(package.package["port"])))
-        log("___send back file___")
+        sendBackUdpSocket.sendto(bytes("ok",encoding="utf-8"),(package.package["source_ip"],int(package.package["source_port"])))
+        log("send back ok package")
         sendBackUdpSocket.close()
-
-
+    elif kind == "ok back":
+        if states[addr]=="request":
+            states[addr]="ok back"
+            send_file(addr)
+            #sendBackUdpSocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+            #sendBackUdpSocket.sendto(bytes("ok back",encoding="utf-8"),(package.package["source_ip"],int(package.package["source_port"])))
+            log("start transfer file")
+            #sendBackUdpSocket.close()
+            #sendFile()
+    elif kind == "FileClass":
+        # add flow control and congestion control
+        # and timer and send back
+        pass
+    elif kind == "ack":
+        # need flow control and congestion control
+        # need send back
+        if file_dict[addr]["length"] <= FileClass(data).package["data"]:
+            udpsocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+            udpsocket.sendto(bytes(FinClass(None,args.source_ip,args.source_port)),addr)
+            return
+        send_file(addr)
+        log("send file package")
+    elif kind=="fin":
+        log("finish sending file")
+        file_dict[addr] = None
+        require_dict[addr]=None
 def runServer(udpsocket):
     log("running server")
     while True:
-        data , addr = udpsocket.recvfrom(1024)
+        if args.debug==True:
+            data, addr = udpsocket.recvfrom(2048)
+        else:
+            try:
+                data , addr = udpsocket.recvfrom(2048)
+            except Exception as e:
+                print(e)
+                log("recv time out")
+                continue
         # addr should be ("127.0.0.1", 8000)
-        log(data)
-        t = threading.Thread(target=toprouter,args=(udpsocket,data,addr))
+        #log(data)
+        t = threading.Thread(target=multiplexing,args=(udpsocket,data,addr))
         t.start()
 # In[15]:
 
 
 if __name__ == "__main__":
+    init_args()
     sock = init()
     runServer(sock)
 
