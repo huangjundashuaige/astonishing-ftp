@@ -4,10 +4,12 @@ import socket
 from varyPackage.packages import *
 import argparse
 from functools import reduce
+import time
 # global variable
 file_dict = dict()
 cache_file = dict()
 args = None
+start_time = time.time()
 def log(message):
     if args.debug:
         print(message)
@@ -101,11 +103,15 @@ def whatKindaPackage(data):
 
 def check_continous():
     global cache_file
+    global start_time
     key_list = cache_file.keys()
     key_list = sorted(key_list)
     for x in range(len(key_list)-1):
         if key_list[x+1] > key_list[x]+1024:
             return key_list[x]
+    if time.time()-start_time >= 2:
+        start_time = time.time()
+        cache2dist((args.dest_ip,args.dest_port))
     return key_list[-1]
 
 def cache2dist(addr):
@@ -114,6 +120,7 @@ def cache2dist(addr):
     bytes_file_list = list(map(lambda x:cache_file[x],key_list))
     bytes_file = reduce(lambda x,y:x+y,bytes_file_list)
     file_dict[addr]["file"].write(bytes_file)
+    cache_file = dict()
 def handle_file_package(data,addr):
     global file_dict
     kind = whatKindaPackage(data)

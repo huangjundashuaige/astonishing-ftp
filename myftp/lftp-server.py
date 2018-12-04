@@ -23,7 +23,7 @@ global_dict = dict()
 
 ## send file fsm  require->ok->ok back->(send and ack)->fin
 ## recv file fsm  request->ok->(send and ack)->fin
-rtt = 1
+rtt = 0.5
 swnd_size = 10
 time_out_limit = 3
 def init_args():
@@ -85,8 +85,8 @@ def send_file(addr):
     global file_dict
     global args
     filesocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-    if file_dict[addr]["current_seq"] + 1024 > file_dict[addr]["length"]:
-        log(file_dict[addr]["bytes_file"][file_dict[addr]["current_seq"]:])
+    if file_dict[addr]["current_seq"] + 1024 >= file_dict[addr]["length"] :
+        #log(file_dict[addr]["bytes_file"][file_dict[addr]["current_seq"]:])
         package = FileClass(file_dict[addr]["bytes_file"][file_dict[addr]["current_seq"]:],args.source_ip,args.source_port)
         file_dict[addr]["current_seq"] = file_dict[addr]["length"]
         global_dict[addr]["sent_all"] = True
@@ -107,7 +107,7 @@ def init_file_dict(addr,bytes_file):
     global file_dict
     file_dict[addr] = dict()
     file_dict[addr]["length"] = len(bytes_file)
-    log("length {}".format(len(bytes_file)))
+    #log("length {}".format(len(bytes_file)))
     file_dict[addr]["current_seq"] = 0
     file_dict[addr]["bytes_file"] = bytes_file
 
@@ -121,7 +121,7 @@ def handle_file_package(data):
         package = FileClass(data)
         addr =(package.package["source_ip"],package.package["source_port"])
         if package.package["seq"] <= file_dict[addr]["current_ack"] + 1024:
-            log(package.package["data"])
+            #log(package.package["data"])
             file_dict[addr]["file"].write(package.data)
             file_dict[addr]["current_ack"] = package.package["seq"]
         udpsocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
@@ -169,7 +169,7 @@ def start_send_file(addr):
             if time.time() - start_time > 1:
                 break
             elif swnd_count > global_dict[addr]["swnd_size"]:
-                log(time.time()-start_time)
+                #log(time.time()-start_time)
                 t= threading.Timer(global_dict[addr]["RTT"]-(time.time()-start_time),start_send_file,[addr])
                 t.start()
                 log("early stop")
@@ -195,7 +195,7 @@ def check_timer(addr):
             lost_package_happen(addr)
             #global_dict[addr]["current_ack"] = x
             break
-    if len(global_dict[addr])==0:
+    if global_dict[addr]["sent_fin"]==True:
         return
     t = threading.Timer(global_dict[addr]["RTT"],check_timer,[addr])
     t.start()
@@ -206,21 +206,36 @@ def fast_resend(addr,ack):
     filesocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
     if ack + 1024 > file_dict[addr]["length"]:
         #log(file_dict[addr]["bytes_file"][file_dict[addr]["current_seq"]:])
-        log("send seq={}".format(ack))
+        log("fast resend seq finish={}".format(ack))
         package = FileClass(file_dict[addr]["bytes_file"][ack:],args.source_ip,args.source_port)
         #file_dict[addr]["current_seq"] = file_dict[addr]["length"]
         global_dict[addr]["sent_all"] = True
     else:
-        log("send seq={}".format(ack))
+        log("fast resend seq={}".format(ack))
+        
+        # bug
+        '''
+        print(ack)
+        print(file_dict[addr]["length"])
+        udpsocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+        udpsocket.sendto(bytes(FinClass(None,args.source_ip,args.source_port)),addr)
+        log("send fin package")
+        global_dict[addr]["sent_fin"]=True
+        return
+        '''
+        #bug
         package = FileClass(file_dict[addr]["bytes_file"][ack:ack+1024],args.source_ip,args.source_port)
         #file_dict[addr]["current_seq"] += 1024
         # set the timer
-        global_dict[addr]["timer"][ack] = time.time()
+        global_dict[addr]["timers"][ack] = time.time()
     package.seq(ack)
     filesocket.sendto(bytes(package),(require_dict[addr].package["source_ip"],require_dict[addr].package["source_port"]))
 
 
+lock = threading.Lock()
+
 def handle_timers(addr,data):
+    lock.acquire()
     package = AckClass(data)
     current_ack = package.package["data"]
     if current_ack not in global_dict[addr]["timers"].keys():
@@ -234,12 +249,14 @@ def handle_timers(addr,data):
             global_dict[addr]["same_ack_value"] = current_ack
             global_dict[addr]["same_ack_count"] = 0
     else:
-        if current_ack % 1000 == 0:
+        if current_ack % 10 == 0:
             global rtt
             rtt = time.time()-global_dict[addr]["timers"][current_ack]
-            log("update rtt = {}".format(rtt))
+            if args.debug==False:
+                global_dict[addr]["RTT"] = rtt
+            #log("update rtt = {}".format(rtt))
         global_dict[addr]["timers"].pop(current_ack)
-    
+    lock.release()
 
 def multiplexing(udpsocket,data,addr):
     kind = whatKindaPackage(data)
@@ -247,7 +264,7 @@ def multiplexing(udpsocket,data,addr):
         addr = (eval(data.decode())["source_ip"],eval(data.decode())["source_port"])
     else:
         addr = (FileClass(data).package["source_ip"],FileClass(data).package["source_port"])
-    log(kind)
+    #log(kind)
 
     if kind == "RequireFileClass":
         #fsm
@@ -288,7 +305,8 @@ def multiplexing(udpsocket,data,addr):
     elif kind == "ack":
         # need flow control and congestion control
         # need send back
-        if file_dict[addr]["length"] <= AckClass(data).package["data"]:
+        #+1024???
+        if file_dict[addr]["length"] <= AckClass(data).package["data"]+1024:
             udpsocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
             udpsocket.sendto(bytes(FinClass(None,args.source_ip,args.source_port)),addr)
             log("send fin package")
@@ -297,7 +315,7 @@ def multiplexing(udpsocket,data,addr):
         #send_file(addr)
         handle_timers(addr,data)
         #check_timer(addr)
-        log("recv ack")
+        #log("recv ack")
     elif kind=="fin":
         log("finish sending file")
         log("---fin---")
@@ -314,7 +332,7 @@ def runServer(udpsocket):
             try:
                 data , addr = udpsocket.recvfrom(2048)
             except Exception as e:
-                print(e)
+                #print(e)
                 log("recv time out")
                 continue
         # addr should be ("127.0.0.1", 8000)

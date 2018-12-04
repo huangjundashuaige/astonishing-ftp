@@ -50,14 +50,14 @@ class FileClass(PackageClass):
         self.package["data"]=None
         self.data = data
         self.data_length = len(data)
-        print(len(data))
+        #print(len(data))
         self.package["kind"] = "FileClass"
     def __bytes__(self):
         if len(str(self.data_length))!=4:
             data_length = reduce(lambda x,y:x+y,['0' for x in range(4-len(str(self.data_length)))])+str(self.data_length)
         else:
             data_length = str(self.data_length)
-        print("package length"+str(len(self.data)))
+        #print("package length"+str(len(self.data)))
         return bytes('0000'+data_length+str(self),encoding="utf-8")+self.data
     def ack(self,start_byte):
         self.package["ack"]=start_byte
