@@ -195,6 +195,8 @@ def check_timer(addr):
             lost_package_happen(addr)
             #global_dict[addr]["current_ack"] = x
             break
+    if len(global_dict[addr])==0:
+        return
     t = threading.Timer(global_dict[addr]["RTT"],check_timer,[addr])
     t.start()
     

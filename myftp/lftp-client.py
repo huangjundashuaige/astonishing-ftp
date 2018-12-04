@@ -3,8 +3,10 @@ import threading
 import socket
 from varyPackage.packages import *
 import argparse
+from functools import reduce
 # global variable
 file_dict = dict()
+cache_file = dict()
 args = None
 def log(message):
     if args.debug:
@@ -97,7 +99,21 @@ def whatKindaPackage(data):
     else:
         return eval(data.decode())["kind"]
 
+def check_continous():
+    global cache_file
+    key_list = cache_file.keys()
+    key_list = sorted(key_list)
+    for x in range(len(key_list)-1):
+        if key_list[x+1] > key_list[x]+1024:
+            return key_list[x]
+    return key_list[-1]
 
+def cache2dist(addr):
+    global cache_file
+    key_list = sorted(cache_file.keys())
+    bytes_file_list = list(map(lambda x:cache_file[x],key_list))
+    bytes_file = reduce(lambda x,y:x+y,bytes_file_list)
+    file_dict[addr]["file"].write(bytes_file)
 def handle_file_package(data,addr):
     global file_dict
     kind = whatKindaPackage(data)
@@ -105,13 +121,19 @@ def handle_file_package(data,addr):
     if kind == "FileClass":
         package = FileClass(data)
         if package.package["seq"] <= file_dict[addr]["current_ack"] + 1024:
-            log(package.package["data"])
-            file_dict[addr]["file"].write(package.data)
+            log("current seq={}".format(package.package["seq"]))
+            #log(package.package["data"])
+            #file_dict[addr]["file"].write(package.data)
+
+            #from zero cache to infinate cache
+            cache_file[package.package["seq"]] = package.data
+            current_ack = check_continous()
             file_dict[addr]["current_ack"] = package.package["seq"]
         udpsocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         ackpackage = AckClass(file_dict[addr]["current_ack"],args.source_ip,args.source_port)
         udpsocket.sendto(bytes(ackpackage),(args.dest_ip,args.dest_port))
     elif kind == "fin":
+        cache2dist(addr)
         file_dict[addr]["file"].close()
         sys.exit(0)
 
