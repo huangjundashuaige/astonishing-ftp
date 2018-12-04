@@ -69,7 +69,11 @@ def init():
     return udpsock
 
 def whatKindaPackage(data):
-    return eval(data.decode())["kind"]
+    if data[:4] == bytes("0000",encoding="utf-8"):
+        return "FileClass"
+    else:
+        return eval(data.decode())["kind"]
+
 
 def send_file(addr):
     global file_dict
@@ -102,9 +106,23 @@ def init_require_dict(addr,package):
     global require_dict
     require_dict[addr] = package
 
+def handle_file_package(data):
+    global file_dict
+    if whatKindaPackage(data) == "FileClass":
+        package = FileClass(data)
+        addr =(package.package["source_ip"],package.package["source_port"])
+        if package.package["seq"] <= file_dict[addr]["current_ack"] + 1024:
+            log(package.package["data"])
+            file_dict[addr]["file"].write(package.data)
+            file_dict[addr]["current_ack"] = package.package["seq"]
+        udpsocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+        ackpackage = AckClass(file_dict[addr]["current_ack"],args.source_ip,args.source_port)
+        udpsocket.sendto(bytes(ackpackage),addr)
+
 def multiplexing(udpsocket,data,addr):
     kind = whatKindaPackage(data)
-    addr = (eval(data.decode())["source_ip"],eval(data.decode())["source_port"])
+    if kind!="FileClass":
+        addr = (eval(data.decode())["source_ip"],eval(data.decode())["source_port"])
     log(kind)
     if kind == "RequireFileClass":
         #fsm
@@ -123,34 +141,37 @@ def multiplexing(udpsocket,data,addr):
         states[addr] = "request"
         log("request to send file package")
         package = RequestFileClass(data)
+
+        # create file handler
+        f = open(package.package["data"],'ab')
+        addr = (package.package["source_ip"],package.package["source_port"])
+        file_dict[addr] = dict()
+        file_dict[addr]["file"] = f
+        file_dict[addr]["current_ack"] = 0
+
+
         sendBackUdpSocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         sendBackUdpSocket.sendto(bytes("ok",encoding="utf-8"),(package.package["source_ip"],int(package.package["source_port"])))
         log("send back ok package")
         sendBackUdpSocket.close()
-    elif kind == "ok back":
-        if states[addr]=="request":
-            states[addr]="ok back"
-            send_file(addr)
-            #sendBackUdpSocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-            #sendBackUdpSocket.sendto(bytes("ok back",encoding="utf-8"),(package.package["source_ip"],int(package.package["source_port"])))
-            log("start transfer file")
-            #sendBackUdpSocket.close()
-            #sendFile()
     elif kind == "FileClass":
         # add flow control and congestion control
         # and timer and send back
-        pass
+        handle_file_package(data)
     elif kind == "ack":
         # need flow control and congestion control
         # need send back
-        if file_dict[addr]["length"] <= FileClass(data).package["data"]:
+        if file_dict[addr]["length"] <= AckClass(data).package["data"]:
             udpsocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-            udpsocket.sendto(bytes(FinClass(None,args.source_ip,args.source_port)),addr)
+            udpsocket.sendto(bytes(AckClass(None,args.source_ip,args.source_port)),addr)
+            log("send fin package")
             return
         send_file(addr)
         log("send file package")
     elif kind=="fin":
         log("finish sending file")
+        log("---fin---")
+        file_dict[addr]["file"].close()
         file_dict[addr] = None
         require_dict[addr]=None
 def runServer(udpsocket):
