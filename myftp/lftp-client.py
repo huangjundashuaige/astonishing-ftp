@@ -111,7 +111,7 @@ def handle_file_package(data,addr):
         udpsocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         ackpackage = AckClass(file_dict[addr]["current_ack"],args.source_ip,args.source_port)
         udpsocket.sendto(bytes(ackpackage),(args.dest_ip,args.dest_port))
-    elif kind == "ack":
+    elif kind == "fin":
         file_dict[addr]["file"].close()
         sys.exit(0)
 
