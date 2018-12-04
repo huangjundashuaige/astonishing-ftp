@@ -158,6 +158,9 @@ def update_con_wnd(addr):
 def start_send_file(addr):
     log("start send file")
     update_con_wnd(addr)
+    
+    log("congestion window size = {}".format(global_dict[addr]["swnd_size"]))
+    #global_dict[addr]["swnd_size"]
     while True:
         if global_dict[addr]["stop"] ==True:
             return

@@ -84,7 +84,7 @@ def send_file(sendsocket,listensock):
             if kind == "ack":
             # need flow control and congestion control
             # need send back
-                log(AckClass(data).package["data"])
+                #log(AckClass(data).package["data"])
                 if file_dict[addr]["length"] <= AckClass(data).package["data"]:
                     log("send fin package")
                     udpsocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
