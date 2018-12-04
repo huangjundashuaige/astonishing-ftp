@@ -176,7 +176,7 @@ def start_send_file(addr):
                 return
             else:
                 swnd_count+=1
-                if global_dict[addr]["sent_fin"] == True or global_dict[addr]["sent_all"]==True:
+                if global_dict[addr]["sent_fin"] == True:
                     return
                 else:
                     send_file(addr)
